@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Money HQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ================= Top bar ================= -->
+  <header class="top">
+    <div class="brand">
+      <button type="button" class="icon-btn" id="menuBtn" aria-label="Open the add panel" aria-controls="drawer">☰</button>
+      <span class="logo" aria-hidden="true">◈</span>
+      <div><strong>Money HQ</strong><span>Personal finance</span></div>
+    </div>
+
+    <nav class="seg" aria-label="Sections">
+      <a href="#overview" data-tab="overview"><span aria-hidden="true">✳</span>Overview</a>
+      <a href="#week" data-tab="week"><span aria-hidden="true">◷</span>This week</a>
+      <a href="#planner" data-tab="planner"><span aria-hidden="true">↗</span>Planner</a>
+    </nav>
+
+    <div class="top-right">
+      <button type="button" class="btn-outline" id="addBtn">＋ Add entry</button>
+      <span id="clock" class="clock"></span>
+    </div>
+  </header>
+
+  <!-- ================= Add drawer (left side) ================= -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" aria-label="Add and settings" aria-hidden="true">
+    <div class="drawer-head">
+      <strong>Add &amp; settings</strong>
+      <button type="button" class="icon-btn" id="closeDrawer" aria-label="Close">✕</button>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-pane="income">Income</button>
+      <button type="button" role="tab" data-pane="spend">Spending</button>
+      <button type="button" role="tab" data-pane="fixed">Fixed costs</button>
+      <button type="button" role="tab" data-pane="settings">Settings</button>
+      <button type="button" role="tab" data-pane="data">Backup</button>
+    </div>
+
+    <!-- Income -->
+    <section class="pane" data-pane-body="income">
+      <form id="incomeForm" class="form">
+        <div class="toggle" role="radiogroup" aria-label="Type">
+          <label><input type="radio" name="kind" value="shift" checked><span>Shift</span></label>
+          <label><input type="radio" name="kind" value="lump"><span>Lump sum</span></label>
+        </div>
+        <label>Date <input type="date" id="date" required></label>
+        <label id="hoursField">Hours <input type="number" id="hours" min="0" step="0.25" placeholder="4"></label>
+        <label id="amountField" hidden>Amount ($) <input type="number" id="amount" min="0" step="0.01" placeholder="50"></label>
+        <label>Note <input type="text" id="note" maxlength="60" placeholder="Library shift"></label>
+        <button type="submit" class="btn">Add income</button>
+        <p id="formError" class="error" role="alert"></p>
+      </form>
+      <h3 class="list-title">Recent income</h3>
+      <ul id="incomeList" class="rows"></ul>
+    </section>
+
+    <!-- Spending -->
+    <section class="pane" data-pane-body="spend" hidden>
+      <form id="expenseForm" class="form">
+        <label>Date <input type="date" id="expDate" required></label>
+        <label>Amount ($) <input type="number" id="expAmount" min="0" step="0.01" placeholder="12.50"></label>
+        <label>Category
+          <select id="expCategory">
+            <option>Food</option><option>Transport</option><option>Fun</option><option>Shopping</option>
+            <option>School</option><option>Bills</option><option>Ecom</option><option>Other</option>
+          </select>
+        </label>
+        <label>Note <input type="text" id="expNote" maxlength="60" placeholder="Lunch on campus"></label>
+        <button type="submit" class="btn">Add spending</button>
+        <p id="expError" class="error" role="alert"></p>
+      </form>
+      <h3 class="list-title">Recent spending</h3>
+      <ul id="expList" class="rows"></ul>
+    </section>
+
+    <!-- Fixed costs -->
+    <section class="pane" data-pane-body="fixed" hidden>
+      <form id="fixedForm" class="form">
+        <label>Name <input type="text" id="fixedName" maxlength="30" placeholder="Phone plan"></label>
+        <label>Per month ($) <input type="number" id="fixedAmount" min="0" step="0.01" placeholder="35"></label>
+        <button type="submit" class="btn">Add fixed cost</button>
+        <p id="fixedError" class="error" role="alert"></p>
+      </form>
+      <p class="hint">Things you pay every month. When you actually pay one, also add it under Spending as "Bills". Bills don't use up your weekly spending money, because fixed costs already set it aside.</p>
+      <h3 class="list-title">Monthly fixed costs</h3>
+      <ul id="fixedList" class="rows"></ul>
+    </section>
+
+    <!-- Settings -->
+    <section class="pane" data-pane-body="settings" hidden>
+      <form id="settingsForm" class="form two">
+        <label>Goal ($) <input type="number" id="goal" min="1" step="1"></label>
+        <label>Hourly rate ($) <input type="number" id="rate" min="0" step="0.01" placeholder="17.85"></label>
+        <label>Take-home % <input type="number" id="takeHome" min="1" max="100" step="1"></label>
+        <label>Hours / week <input type="number" id="hoursPerWeek" min="0" step="0.5"></label>
+        <label>Already saved ($) <input type="number" id="startingSaved" min="0" step="0.01"></label>
+        <label>Save % of pay <input type="number" id="savePercent" min="0" max="100" step="1"></label>
+        <button type="submit" class="btn wide">Save settings</button>
+        <p id="settingsNotice" class="hint wide" role="status"></p>
+      </form>
+      <p class="hint">Take-home % covers CPP, EI and tax. Start near 90% and fix it from your first pay stub. Save % is the part of each week's pay that goes to your goal before you spend.</p>
+    </section>
+
+    <!-- Backup -->
+    <section class="pane" data-pane-body="data" hidden>
+      <p class="hint">Your numbers live only in this browser. Clearing browser data deletes them, so download a backup now and then.</p>
+      <div class="btn-row">
+        <button type="button" id="exportBtn" class="btn">Download backup</button>
+        <label class="btn-outline">Restore <input type="file" id="importFile" accept="application/json" hidden></label>
+      </div>
+      <p id="notice" class="hint" role="status"></p>
+    </section>
+  </aside>
+
+  <!-- ================= OVERVIEW ================= -->
+  <main class="view overview" data-view="overview">
+    <section class="map-wrap">
+      <div class="periods" id="periods" aria-label="Period"></div>
+      <svg id="map" viewBox="0 0 1000 720" role="img" aria-label="Money map"></svg>
+      <p id="mapEmpty" class="map-empty">Add income and spending from the left panel, and your map grows here.</p>
+    </section>
+    <aside class="detail" id="detail" aria-live="polite"></aside>
+  </main>
+
+  <!-- ================= THIS WEEK ================= -->
+  <main class="view week" data-view="week" hidden>
+    <section class="panel hero">
+      <span class="kicker">◷ This week · <span id="wRange"></span></span>
+      <h1 class="title">Safe to spend</h1>
+      <div class="hero-num"><b id="wLeft">$0</b><span id="wOf" class="muted"></span></div>
+      <div class="meter"><i id="wBar"></i></div>
+      <p id="wLine" class="lead"></p>
+      <div class="tiles four">
+        <div class="tile"><b id="wPay">$0</b><span>Pay this week</span></div>
+        <div class="tile"><b id="wFixed">$0</b><span>Fixed costs</span></div>
+        <div class="tile"><b id="wSave">$0</b><span>To your goal</span></div>
+        <div class="tile"><b id="wSpent">$0</b><span>Spent so far</span></div>
+      </div>
+      <p class="hint">Pay = hours per week × take-home per hour. Safe to spend = pay − fixed costs − savings − what you've spent since Monday.</p>
+    </section>
+    <section class="panel">
+      <span class="kicker">By category</span>
+      <ul id="wCats" class="bars"></ul>
+      <p id="wCatsEmpty" class="hint">Nothing spent this week.</p>
+      <span class="kicker gap">This week's spending</span>
+      <ul id="wList" class="rows"></ul>
+      <p id="wListEmpty" class="hint">Nothing yet.</p>
+    </section>
+  </main>
+
+  <!-- ================= PLANNER (v3) ================= -->
+  <main class="view split" data-view="planner" hidden>
+    <section class="panel">
+      <span class="kicker">↗ Future planner</span>
+      <h1 class="title">How much can I risk by…</h1>
+      <form id="planForm" class="form two" autocomplete="off">
+        <label class="wide">Date <input type="date" id="pDate"></label>
+        <label>Hours / week <input type="number" id="pHours" min="0" step="0.5"></label>
+        <label>Spending / week ($) <input type="number" id="pSpend" min="0" step="1"></label>
+        <label>Safety floor ($) <input type="number" id="pFloor" min="0" step="10"></label>
+        <label>Locked for other goals ($) <input type="number" id="pLocked" min="0" step="10"></label>
+      </form>
+      <p class="hint" id="pHint"></p>
+      <p class="hint">Safety floor: money you never touch, whatever happens. Locked: money already promised to something else. Bills come from your fixed costs automatically.</p>
+    </section>
+    <section class="panel results">
+      <span class="kicker" id="pKicker">By –</span>
+      <h2 class="title">You can afford to lose</h2>
+      <div class="hero-num"><b id="pMax">$0</b></div>
+      <div class="tiles four">
+        <div class="tile"><b id="pWeeks">0</b><span>Weeks left</span></div>
+        <div class="tile"><b id="pIncome">$0</b><span>Job pay by then</span></div>
+        <div class="tile"><b id="pOut">$0</b><span>Spending + bills</span></div>
+        <div class="tile"><b id="pThen">$0</b><span>Money on that date</span></div>
+      </div>
+      <div class="chart-box">
+        <span class="kicker">Projected balance</span>
+        <svg id="pChart" viewBox="0 0 600 220" role="img" aria-label="Projected balance by week"></svg>
+      </div>
+      <span class="kicker gap">✦ Analysis</span>
+      <ul id="pAnalysis" class="analysis"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
