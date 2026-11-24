@@ -119,6 +119,22 @@
         <label class="btn-outline">Restore <input type="file" id="importFile" accept="application/json" hidden></label>
       </div>
       <p id="notice" class="hint" role="status"></p>
+
+      <h3 class="list-title">Sync code: move data without a file</h3>
+      <p class="hint">Your data gets locked with a key you pick, then turned into one long line of text. Paste that text into Money HQ in another browser, type the same key, and your data appears. Without the key the code is unreadable. If you forget the key, the code can't be opened, by you or anyone.</p>
+      <div class="form">
+        <label>Your key <input type="password" id="syncKey" autocomplete="new-password" placeholder="At least 8 characters"></label>
+        <button type="button" id="makeCode" class="btn">Copy sync code</button>
+        <textarea id="syncOut" rows="4" readonly hidden aria-label="Your sync code"></textarea>
+      </div>
+
+      <h3 class="list-title">Load from a sync code</h3>
+      <div class="form">
+        <label>Paste the code <textarea id="syncIn" rows="4" spellcheck="false"></textarea></label>
+        <label>Key <input type="password" id="syncKeyIn" autocomplete="current-password"></label>
+        <button type="button" id="loadCode" class="btn-outline">Load my data</button>
+      </div>
+      <p id="syncNotice" class="hint" role="status"></p>
     </section>
   </aside>
 

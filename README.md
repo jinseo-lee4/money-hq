@@ -12,7 +12,7 @@ A personal finance dashboard: where my money comes from, where it goes, how much
 | **Overview** | Money map: balance orb → one card per group (Shifts, Food, Bills…) → entries fan out. Click a card for its share, change vs last month, average and biggest entry. Click the orb for the goal summary and rule-based insights. Filter by month. |
 | **This week** | Safe to spend Monday–Sunday = pay − fixed costs − savings − spent. Spending by category. |
 | **Planner** | Pick a date: job pay by then, money on that date, and the most you can afford to lose without going under your safety floor. Projected balance chart. |
-| **Add panel (left)** | Add income (shifts or lump sums), spending, monthly fixed costs; settings; backup and restore. |
+| **Add panel (left)** | Add income (shifts or lump sums), spending, monthly fixed costs; settings; backup and restore; sync code. |
 
 ## Files
 
@@ -41,6 +41,17 @@ A personal finance dashboard: where my money comes from, where it goes, how much
 - Job pay by then = hours per week × take-home per hour × weeks
 - Money on that date = balance + job pay − (spending per week + fixed per week) × weeks
 - Most you can lose = money on that date − safety floor − locked money
+
+## Sync code (move data between browsers without a file)
+
+Backup → type a key → **Copy sync code**. You get one line of text starting with `MHQ1.`. In the other browser: Backup → paste the code → same key → **Load my data**.
+
+How it's locked, all inside the browser with the built-in Web Crypto (no server, no API):
+- key → PBKDF2-SHA-256, 250,000 rounds, random 16-byte salt → 256-bit AES-GCM key
+- data → gzip → AES-GCM with a random 12-byte IV
+- code = `MHQ1.` + base64url(salt + IV + locked data)
+
+A wrong key or a cut-off code fails the AES-GCM check, so nothing gets loaded. A forgotten key can't be recovered. Use a long key (a short phrase is good), because anyone with the code can try guessing it.
 
 ## Run it
 

@@ -934,6 +934,116 @@ $("importFile").addEventListener("change", async (event) => {
   }
 });
 
+// ----- Sync code -----
+// Your data is locked (encrypted) with your key right here in the browser, using the
+// browser's built-in Web Crypto. Nothing is sent anywhere. The code looks like "MHQ1.xxxx…".
+//   key → PBKDF2 (250,000 rounds, random salt) → AES-GCM 256-bit lock
+// AES-GCM also detects a wrong key or a damaged code, so it can't load garbage.
+
+const SYNC_PREFIX = "MHQ1.";
+
+async function lockKey(pass, salt) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+  );
+}
+
+// gzip makes the code about 3–5× shorter (if the browser supports it)
+async function squeeze(bytes, how) {
+  const stream = new Blob([bytes]).stream().pipeThrough(how === "zip" ? new CompressionStream("gzip") : new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function joinBytes(...parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+
+// bytes ↔ text that's safe to paste anywhere (base64url)
+function toText(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function fromText(text) {
+  const b64 = text.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(b64 + "===".slice((b64.length + 3) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function makeSyncCode(pass) {
+  const raw = new TextEncoder().encode(JSON.stringify(state));
+  const canZip = "CompressionStream" in window;
+  const body = canZip ? joinBytes([1], await squeeze(raw, "zip")) : joinBytes([0], raw); // first byte: 1 = zipped
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const locked = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await lockKey(pass, salt), body));
+  return SYNC_PREFIX + toText(joinBytes(salt, iv, locked));
+}
+
+async function readSyncCode(code, pass) {
+  const clean = code.replace(/\s+/g, "");
+  if (!clean.startsWith(SYNC_PREFIX)) throw new Error("format");
+  const bytes = fromText(clean.slice(SYNC_PREFIX.length));
+  const salt = bytes.slice(0, 16);
+  const iv = bytes.slice(16, 28);
+  const body = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await lockKey(pass, salt), bytes.slice(28)));
+  const raw = body[0] === 1 ? await squeeze(body.slice(1), "unzip") : body.slice(1);
+  return cleanState(JSON.parse(new TextDecoder().decode(raw)));
+}
+
+const syncSay = (text) => { $("syncNotice").textContent = text; };
+
+$("makeCode").addEventListener("click", async () => {
+  const pass = $("syncKey").value;
+  if (!window.crypto || !crypto.subtle) return syncSay("This browser can't lock data here. Open Money HQ from its https:// link.");
+  if (pass.length < 8) return syncSay("Use a key with at least 8 characters. Longer is safer.");
+  syncSay("Locking…");
+  try {
+    const code = await makeSyncCode(pass);
+    $("syncOut").value = code;
+    $("syncOut").hidden = false;
+    state.lastBackup = today();
+    saveState();
+    render();
+    try {
+      await navigator.clipboard.writeText(code);
+      syncSay(`Copied (${code.length.toLocaleString()} characters). Paste it in the other browser and use the same key.`);
+    } catch {
+      $("syncOut").select();
+      syncSay("Couldn't copy by itself. The code is selected below: press Cmd+C (or Ctrl+C) to copy it.");
+    }
+  } catch {
+    syncSay("Something went wrong making the code. Try again.");
+  }
+});
+
+$("loadCode").addEventListener("click", async () => {
+  const code = $("syncIn").value;
+  const pass = $("syncKeyIn").value;
+  if (!window.crypto || !crypto.subtle) return syncSay("This browser can't unlock data here. Open Money HQ from its https:// link.");
+  if (!code.trim() || !pass) return syncSay("Paste the code and type the key first.");
+  syncSay("Unlocking…");
+  let data;
+  try {
+    data = await readSyncCode(code, pass);
+  } catch (e) {
+    return syncSay(e.message === "format" ? "That doesn't look like a Money HQ sync code (it should start with MHQ1.)." : "Wrong key, or the code got cut off when copying.");
+  }
+  if (!confirm(`Replace everything in this browser with the data from the code? (${data.entries.length} income, ${data.expenses.length} spending entries)`)) return syncSay("Cancelled. Nothing changed.");
+  state = data;
+  saveState();
+  fillPlanForm();
+  render();
+  $("syncIn").value = "";
+  $("syncKeyIn").value = "";
+  syncSay(`Loaded: ${data.entries.length} income and ${data.expenses.length} spending entries.`);
+});
+
 function tickClock() {
   const now = new Date();
   const day = now.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
