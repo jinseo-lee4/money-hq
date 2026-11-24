@@ -9,10 +9,11 @@ A personal finance dashboard: where my money comes from, where it goes, how much
 
 | Section | What it does |
 |---|---|
-| **Overview** | Money map: balance orb → one card per group (Shifts, Food, Bills…) → entries fan out. Click a card for its share, change vs last month, average and biggest entry. Click the orb for the goal summary and rule-based insights. Filter by month. |
+| **Overview: Monthly plan** (default) | Balance now in the orb, with **the balance at the end of this month** under it. One card per monthly budget line (Job from Settings, extra income, each spending category, fixed costs). All cards flow into a net-per-month hub, which fans out to the balance at the end of the next 6 months. The panel shows money in/out per month, what's left over, and the month you reach your goal. Click a card for per week / month / year and what a 25% cut would save. |
+| **Overview: Logged entries** | The same map built from what you logged one by one; each card's entries fan out from that card. Filter by month. |
 | **This week** | Safe to spend Monday–Sunday = pay − fixed costs − savings − spent. Spending by category. |
 | **Planner** | Pick a date: job pay by then, money on that date, and the most you can afford to lose without going under your safety floor. Projected balance chart. |
-| **Add panel (left)** | Add income (shifts or lump sums), spending, monthly fixed costs; settings; backup and restore; sync code. |
+| **Add panel (left)** | Monthly budget (the main way to plan), plus optional one-by-one income and spending, monthly fixed costs, settings, backup and restore, sync code. |
 
 ## Files
 
@@ -29,6 +30,12 @@ A personal finance dashboard: where my money comes from, where it goes, how much
 - A shift's amount = hours × take-home per hour, fixed when logged
 - Balance = already saved + all income − all spending
 - Hours left = (goal − balance) ÷ take-home per hour, rounded up
+
+**Monthly plan**
+- Job per month = hours per week × take-home per hour × 52 ÷ 12
+- Left over per month = money in per month − money out per month (budget spending + fixed costs)
+- End of this month = balance now + left over per month × (days left in the month ÷ days in the month)
+- Each month after that adds one more "left over per month"
 
 **This week (Monday–Sunday)**
 - Pay = hours per week × take-home per hour

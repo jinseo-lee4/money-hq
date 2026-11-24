@@ -25,7 +25,7 @@
     </nav>
 
     <div class="top-right">
-      <button type="button" class="btn-outline" id="addBtn">＋ Add entry</button>
+      <button type="button" class="btn-outline" id="addBtn">＋ Add</button>
       <span id="clock" class="clock"></span>
     </div>
   </header>
@@ -39,6 +39,7 @@
     </div>
 
     <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-pane="budget">Monthly budget</button>
       <button type="button" role="tab" data-pane="income">Income</button>
       <button type="button" role="tab" data-pane="spend">Spending</button>
       <button type="button" role="tab" data-pane="fixed">Fixed costs</button>
@@ -46,8 +47,26 @@
       <button type="button" role="tab" data-pane="data">Backup</button>
     </div>
 
+    <!-- Monthly budget -->
+    <section class="pane" data-pane-body="budget">
+      <p class="hint">Instead of logging every purchase, write down what a normal month looks like. Your job's pay is added for you from Settings, and your fixed costs are added from the Fixed costs tab.</p>
+      <form id="budgetForm" class="form">
+        <div class="toggle" role="radiogroup" aria-label="Money in or out">
+          <label><input type="radio" name="bside" value="out" checked><span>Spending</span></label>
+          <label><input type="radio" name="bside" value="in"><span>Extra income</span></label>
+        </div>
+        <label>Name <input type="text" id="budgetName" maxlength="30" placeholder="Food"></label>
+        <label>Per month ($) <input type="number" id="budgetAmount" min="0" step="1" placeholder="200"></label>
+        <button type="submit" class="btn">Add to budget</button>
+        <p id="budgetError" class="error" role="alert"></p>
+      </form>
+      <h3 class="list-title">Your month</h3>
+      <ul id="budgetList" class="rows"></ul>
+      <p id="budgetEmpty" class="hint">Nothing yet. Try Food, Transport, Fun, Shopping.</p>
+    </section>
+
     <!-- Income -->
-    <section class="pane" data-pane-body="income">
+    <section class="pane" data-pane-body="income" hidden>
       <form id="incomeForm" class="form">
         <div class="toggle" role="radiogroup" aria-label="Type">
           <label><input type="radio" name="kind" value="shift" checked><span>Shift</span></label>
@@ -195,7 +214,7 @@
       <div class="hero-num"><b id="pMax">$0</b></div>
       <div class="tiles four">
         <div class="tile"><b id="pWeeks">0</b><span>Weeks left</span></div>
-        <div class="tile"><b id="pIncome">$0</b><span>Job pay by then</span></div>
+        <div class="tile"><b id="pIncome">$0</b><span>Income by then</span></div>
         <div class="tile"><b id="pOut">$0</b><span>Spending + bills</span></div>
         <div class="tile"><b id="pThen">$0</b><span>Money on that date</span></div>
       </div>

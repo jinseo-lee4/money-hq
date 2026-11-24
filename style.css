@@ -226,6 +226,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--s
   padding: 6px 14px;
   cursor: pointer;
 }
+.periods-sep { width: 1px; background: var(--line-2); margin: 4px 6px; }
 .periods button.on { color: var(--text); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.1); }
 #map { width: 100%; height: auto; display: block; overflow: visible; }
 .map-empty { position: absolute; left: 0; right: 0; bottom: 12%; text-align: center; color: var(--muted); margin: 0; }
@@ -264,6 +265,13 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--s
 #map .pip.on.hot { fill: var(--red); }
 #map .lbl-sub { font-size: 13px; fill: var(--muted); letter-spacing: 0.04em; }
 #map .lbl-core { font-size: 24px; font-weight: 700; }
+#map .lbl-end { font-size: 22px; font-weight: 700; }
+#map .lbl-end.in { fill: var(--green); }
+#map .lbl-end.out { fill: var(--red); }
+#map .card .cplan { font-size: 17px; font-weight: 600; }
+#map .hub { stroke: #fff; stroke-width: 3; }
+#map .hub.in { fill: var(--green); }
+#map .hub.out { fill: var(--red); }
 #map .lbl-more { font-size: 12px; fill: var(--muted); }
 
 /* detail panel */
@@ -358,3 +366,4 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--s
 
 /* sync code box */
 textarea { font: 500 12px/1.5 ui-monospace, Menlo, monospace; resize: vertical; word-break: break-all; }
+.detail .back { margin-top: 14px; }

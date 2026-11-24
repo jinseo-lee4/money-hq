@@ -27,6 +27,7 @@ const DEFAULT_STATE = {
   entries: [],    // income:   { id, date, kind: "shift" | "lump", hours, amount, note }
   expenses: [],   // spending: { id, date, amount, category, note }
   fixedCosts: [], // monthly:  { id, name, monthly }
+  budget: [],     // monthly plan: { id, name, side: "in" | "out", monthly }
   plan: { date: "", hours: null, spend: null, floor: 500, locked: 0 },
   lastBackup: null,
 };
@@ -51,6 +52,7 @@ function cleanState(data) {
     entries: list(d.entries, (e) => typeof e.amount === "number" && e.date),
     expenses: list(d.expenses, (e) => typeof e.amount === "number" && e.date),
     fixedCosts: list(d.fixedCosts, (f) => typeof f.monthly === "number" && f.name),
+    budget: list(d.budget, (b) => typeof b.monthly === "number" && b.name && (b.side === "in" || b.side === "out")),
     plan: { ...DEFAULT_STATE.plan, ...d.plan },
     lastBackup: typeof d.lastBackup === "string" ? d.lastBackup : null,
   };
@@ -209,31 +211,96 @@ function avgWeeklySpend() {
   return sum(state.expenses.filter((e) => e.date >= from && e.date <= today() && e.category !== "Bills")) / 4;
 }
 
-// ================= 4. Overview: money map + detail panel =================
-// Left: an orb for your balance. Middle: one card per group (Shifts, Food...).
-// Click a card and its entries fan out to the right; the panel shows its numbers.
-// Click the orb to go back to the overall summary.
+// The monthly plan: what comes in and goes out in a normal month, and where that leaves you.
+//   Job = hours per week × take-home per hour × 52 ÷ 12 (from Settings)
+//   End of this month = balance now + net per month × share of the month that's left
+//   Each month after that adds one more net per month
+function monthlyPlan() {
+  const lines = [];
+  const job = (state.settings.hoursPerWeek * takeHomePerHour() * 52) / 12;
+  if (job > 0) lines.push({ key: "in:Job", name: "Job", side: "in", monthly: job, source: "settings" });
+  for (const b of state.budget) lines.push({ key: `${b.side}:b:${b.id}`, id: b.id, name: b.name, side: b.side, monthly: b.monthly, source: "budget" });
+  const fixed = state.fixedCosts.reduce((s, f) => s + f.monthly, 0);
+  if (fixed > 0) lines.push({ key: "out:Fixed costs", name: "Fixed costs", side: "out", monthly: fixed, source: "fixed" });
+  lines.sort((a, b) => (a.side === b.side ? b.monthly - a.monthly : a.side === "in" ? -1 : 1));
 
-let mapPeriod = "all";      // "all" or a month like "2026-11"
-let mapSelected = "balance"; // "balance" or a group key like "out:Food"
+  const inTotal = lines.filter((l) => l.side === "in").reduce((s, l) => s + l.monthly, 0);
+  const outTotal = lines.filter((l) => l.side === "out").reduce((s, l) => s + l.monthly, 0);
+  const net = inTotal - outTotal;
+
+  const d = new Date();
+  const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const daysLeft = daysInMonth - d.getDate() + 1; // including today
+  const frac = daysLeft / daysInMonth;
+  const now = totals().saved;
+
+  const months = [];
+  for (let k = 0; k < 6; k++) {
+    const end = new Date(d.getFullYear(), d.getMonth() + k + 1, 0); // last day of that month
+    const sameYear = end.getFullYear() === d.getFullYear();
+    months.push({
+      label: end.toLocaleDateString("en-CA", sameYear ? { month: "short" } : { month: "short", year: "numeric" }),
+      dateLabel: end.toLocaleDateString("en-CA", { month: "short", day: "numeric" }),
+      value: now + net * frac + net * k,
+    });
+  }
+
+  // When the goal is reached at this pace (checks up to 5 years ahead)
+  const goal = state.settings.goal;
+  let goalMonth = null;
+  if (now >= goal) goalMonth = "already";
+  else if (net > 0) {
+    for (let k = 0; k < 60; k++) {
+      if (now + net * frac + net * k >= goal) {
+        goalMonth = new Date(d.getFullYear(), d.getMonth() + k + 1, 0).toLocaleDateString("en-CA", { month: "short", year: "numeric" });
+        break;
+      }
+    }
+  }
+  return { lines, inTotal, outTotal, net, frac, daysLeft, months, goalMonth, now };
+}
+
+// ================= 4. Overview: money map + detail panel =================
+// Two views:
+//   Monthly plan (default): orb = balance now, with the end-of-month balance under it.
+//     Cards = your monthly budget lines (job, other income, each spending category).
+//     All cards flow into a "net" hub, which fans out to your balance at the end of the next 6 months.
+//   Logged entries: cards = groups of things you logged (Shifts, Food...), and each
+//     card's own entries fan out from that card.
+// Click a card for its detail in the right panel. Click the orb to go back to the summary.
+
+let mapMode = "plan";        // "plan" or "log"
+let mapPeriod = "all";       // logged view only: "all" or a month like "2026-11"
+let mapSelected = "balance"; // "balance" or a card key like "out:Food"
 
 function renderPeriods() {
+  const box = $("periods");
+  box.innerHTML = "";
+  const chip = (text, on, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.classList.toggle("on", on);
+    b.addEventListener("click", onClick);
+    box.append(b);
+    return b;
+  };
+  chip("Monthly plan", mapMode === "plan", () => { mapMode = "plan"; mapSelected = "balance"; renderOverview(); });
+  chip("Logged entries", mapMode === "log", () => { mapMode = "log"; mapSelected = "balance"; renderOverview(); });
+  if (mapMode !== "log") return;
+
   const months = new Set([...state.entries, ...state.expenses].map((e) => e.date.slice(0, 7)));
   const list = ["all", ...[...months].sort().reverse()];
   if (!list.includes(mapPeriod)) mapPeriod = "all";
-  const box = $("periods");
-  box.innerHTML = "";
+  const sep = document.createElement("span");
+  sep.className = "periods-sep";
+  box.append(sep);
   for (const p of list) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = p === "all" ? "All time" : monthLabel(p);
-    b.classList.toggle("on", p === mapPeriod);
-    b.addEventListener("click", () => { mapPeriod = p; renderOverview(); });
-    box.append(b);
+    chip(p === "all" ? "All time" : monthLabel(p), p === mapPeriod, () => { mapPeriod = p; renderOverview(); });
   }
 }
 
-// Group entries: [{ key, name, side: "in"|"out", total, items }], biggest first
+// Logged view: group entries into cards [{ key, name, side, total, items }], biggest first
 function mapGroups() {
   const inPeriod = (e) => mapPeriod === "all" || e.date.startsWith(mapPeriod);
   const groups = new Map();
@@ -242,7 +309,7 @@ function mapGroups() {
     if (!groups.has(key)) groups.set(key, { key, name, side, total: 0, items: [] });
     const g = groups.get(key);
     g.total += item.amount;
-    g.items.push(item);
+    g.items.push({ ...item, side, key });
   };
   for (const e of state.entries.filter(inPeriod)) {
     const label = e.kind === "shift" ? `${e.hours} h shift` : "Lump sum";
@@ -256,18 +323,31 @@ function mapGroups() {
 
 function renderOverview() {
   renderPeriods();
-  const groups = mapGroups();
-  if (mapSelected !== "balance" && !groups.some((g) => g.key === mapSelected)) mapSelected = "balance";
-  drawMap(groups);
-  const sel = groups.find((g) => g.key === mapSelected);
-  if (sel) renderGroupDetail(sel, groups);
-  else renderSummaryDetail();
+  if (mapMode === "plan") {
+    const plan = monthlyPlan();
+    if (mapSelected !== "balance" && !plan.lines.some((l) => l.key === mapSelected)) mapSelected = "balance";
+    drawMap(plan.lines.map((l) => ({ ...l, total: l.monthly, big: l.name, small: "per month" })), plan);
+    const sel = plan.lines.find((l) => l.key === mapSelected);
+    if (sel) renderPlanLineDetail(sel, plan);
+    else renderPlanSummary(plan);
+  } else {
+    const groups = mapGroups();
+    if (mapSelected !== "balance" && !groups.some((g) => g.key === mapSelected)) mapSelected = "balance";
+    drawMap(groups.map((g) => ({ ...g, big: String(g.items.length), small: g.name })), null);
+    const sel = groups.find((g) => g.key === mapSelected);
+    if (sel) renderGroupDetail(sel, groups);
+    else renderSummaryDetail();
+  }
 }
 
-function drawMap(groups) {
+// Draws the orb, the cards and the fan. `plan` is set in the Monthly plan view.
+function drawMap(cards, plan) {
   const map = $("map");
   map.innerHTML = "";
-  $("mapEmpty").hidden = groups.length > 0;
+  $("mapEmpty").hidden = cards.length > 0;
+  $("mapEmpty").textContent = plan
+    ? "Open the left panel → Monthly budget, add what you earn and spend in a month, and your plan appears here."
+    : "Add income and spending from the left panel, and your map grows here.";
 
   // Shared effects: a soft glow, and the orb's colour gradient
   const defs = svg("defs");
@@ -287,9 +367,10 @@ function drawMap(groups) {
   const front = svg("g");
   map.append(defs, back, front);
 
-  // ----- Orb: your balance -----
+  // ----- Orb: your balance now (and, in the plan view, at the end of this month) -----
   const OX = 165;
   const OY = 370;
+  const now = totals().saved;
   back.append(svg("circle", { cx: OX, cy: OY, r: 160, class: "halo-fill" }));
   back.append(svg("circle", { cx: OX, cy: OY, r: 115, class: "halo" }));
   const orb = svg("g", { class: mapSelected === "balance" ? "orb sel" : "orb", tabindex: "0", role: "button", "aria-label": "Show overall summary" });
@@ -302,83 +383,121 @@ function drawMap(groups) {
   orb.addEventListener("click", toSummary);
   orb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toSummary(); } });
   front.append(orb);
-  front.append(svg("text", { x: OX, y: OY - 112, "text-anchor": "middle", class: "lbl-sub" }, "BALANCE"));
-  front.append(svg("text", { x: OX, y: OY - 84, "text-anchor": "middle", class: "lbl-core" }, fmt(totals().saved)));
-  front.append(svg("text", { x: OX, y: OY + 104, "text-anchor": "middle", class: "lbl-sub" },
-    mapPeriod === "all" ? "ALL TIME" : monthLabel(mapPeriod).toUpperCase()));
+  front.append(svg("text", { x: OX, y: OY - 112, "text-anchor": "middle", class: "lbl-sub" }, "BALANCE NOW"));
+  front.append(svg("text", { x: OX, y: OY - 84, "text-anchor": "middle", class: "lbl-core" }, fmt(now)));
+  if (plan) {
+    const end = plan.months[0];
+    front.append(svg("text", { x: OX, y: OY + 98, "text-anchor": "middle", class: "lbl-sub" }, `BY ${end.dateLabel.toUpperCase()}`));
+    front.append(svg("text", { x: OX, y: OY + 124, "text-anchor": "middle", class: `lbl-end ${end.value >= now ? "in" : "out"}` }, fmt(end.value)));
+  } else {
+    front.append(svg("text", { x: OX, y: OY + 104, "text-anchor": "middle", class: "lbl-sub" },
+      mapPeriod === "all" ? "ALL TIME" : monthLabel(mapPeriod).toUpperCase()));
+  }
 
-  if (groups.length === 0) return;
+  if (cards.length === 0) return;
 
   // ----- Cards, stacked in the middle -----
   const CARD_X = 330;
   const CARD_W = 200;
+  const CARD_R = CARD_X + CARD_W; // right edge, where lines leave the cards
   const GAP = 14;
-  const n = groups.length;
+  const n = cards.length;
   const cardH = Math.min(68, (640 - GAP * (n - 1)) / n);
   const top = OY - (n * cardH + (n - 1) * GAP) / 2;
-  let selY = OY;
+  const cardY = {}; // card key → its middle y, so lines can start from the right card
 
-  groups.forEach((g, i) => {
+  cards.forEach((c, i) => {
     const y = top + i * (cardH + GAP);
     const cy = y + cardH / 2;
-    const isSel = g.key === mapSelected;
-    if (isSel) selY = cy;
+    cardY[c.key] = cy;
+    const isSel = c.key === mapSelected;
 
     back.append(svg("path", {
       d: `M ${OX + 66} ${OY} C ${OX + 140} ${OY}, ${CARD_X - 80} ${cy}, ${CARD_X} ${cy}`,
       class: isSel ? "link sel" : "link",
     }));
 
-    const sign = g.side === "in" ? "+" : "−";
-    const card = svg("g", { class: isSel ? "card sel" : "card", tabindex: "0", role: "button", "aria-label": `${g.name}, ${g.items.length} ${g.items.length === 1 ? "entry" : "entries"}, ${fmt(g.total)}` });
+    const sign = c.side === "in" ? "+" : "−";
+    const card = svg("g", { class: isSel ? "card sel" : "card", tabindex: "0", role: "button", "aria-label": `${c.name}, ${fmt(c.total)}${plan ? " a month" : ""}` });
     card.append(svg("rect", { x: CARD_X, y, width: CARD_W, height: cardH, rx: 10, class: "bg" }));
-    card.append(svg("circle", { cx: CARD_X + 18, cy: cardH >= 50 ? cy - 9 : cy, r: 4.5, class: `icon ${g.side}` }));
+    card.append(svg("circle", { cx: CARD_X + 18, cy: cardH >= 50 ? cy - 9 : cy, r: 4.5, class: `icon ${c.side}` }));
+    const bigText = c.big.length > 13 ? `${c.big.slice(0, 12)}…` : c.big;
     if (cardH >= 50) {
-      card.append(svg("text", { x: CARD_X + 32, y: cy + 1, class: "count" }, g.items.length));
-      card.append(svg("text", { x: CARD_X + 18, y: cy + 22, class: "cname" }, g.name));
-      card.append(svg("text", { x: CARD_X + CARD_W - 14, y: cy + 1, "text-anchor": "end", class: `ctotal ${g.side}` }, `${sign}${fmt(g.total)}`));
+      card.append(svg("text", { x: CARD_X + 32, y: cy - 2, class: plan ? "cplan" : "count" }, bigText));
+      card.append(svg("text", { x: CARD_X + 18, y: cy + 22, class: "cname" }, c.small));
+      card.append(svg("text", { x: CARD_X + CARD_W - 14, y: cy + 22, "text-anchor": "end", class: `ctotal ${c.side}` }, `${sign}${fmt(c.total)}`));
     } else {
-      card.append(svg("text", { x: CARD_X + 32, y: cy + 5, class: "cname" }, `${g.items.length} · ${g.name}`));
-      card.append(svg("text", { x: CARD_X + CARD_W - 14, y: cy + 5, "text-anchor": "end", class: `ctotal ${g.side}` }, `${sign}${fmt(g.total)}`));
+      card.append(svg("text", { x: CARD_X + 32, y: cy + 5, class: "cname" }, plan ? bigText : `${c.big} · ${c.small}`));
+      card.append(svg("text", { x: CARD_X + CARD_W - 14, y: cy + 5, "text-anchor": "end", class: `ctotal ${c.side}` }, `${sign}${fmt(c.total)}`));
     }
-    const open = () => { mapSelected = g.key; renderOverview(); };
+    const open = () => { mapSelected = c.key; renderOverview(); };
     card.addEventListener("click", open);
     card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
     front.append(card);
   });
 
-  // ----- Fan out entries: the selected group's, or your latest activity when the orb is selected -----
-  const sel = groups.find((g) => g.key === mapSelected);
-  const pool = sel
-    ? sel.items.map((it) => ({ ...it, side: sel.side }))
-    : groups.flatMap((g) => g.items.map((it) => ({ ...it, side: g.side })));
-  const items = [...pool].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 16);
-  const maxAmt = Math.max(...items.map((it) => it.amount));
+  // ----- Fan on the right -----
   const ARC_X = 500;   // leaves sit on a circle arc around this point
   const ARC_R = 330;
   // Leaves are spaced evenly top to bottom (so labels never overlap) and pushed right onto the arc.
-  const rowGap = items.length > 1 ? Math.min(62, 600 / (items.length - 1)) : 0;
-  const half = ((items.length - 1) / 2) * rowGap;
-  const fromX = sel ? CARD_X + CARD_W : OX + 66;
-  if (!sel) selY = OY;
+  const place = (count) => {
+    const rowGap = count > 1 ? Math.min(62, 600 / (count - 1)) : 0;
+    const half = ((count - 1) / 2) * rowGap;
+    return (i) => {
+      const dy = -half + i * rowGap;
+      return { lx: ARC_X + Math.sqrt(ARC_R * ARC_R - dy * dy), ly: OY + dy, fade: 1 - (Math.abs(dy) / ARC_R) * 0.6 };
+    };
+  };
+  const curve = (x1, y1, x2, y2) => `M ${x1} ${y1} C ${x1 + 90} ${y1}, ${x2 - 110} ${y2}, ${x2} ${y2}`;
+
+  if (plan) {
+    // Every card flows into the "net" hub; the hub fans out to future month-ends.
+    const HX = CARD_R + 70;
+    for (const c of cards) {
+      back.append(svg("path", {
+        d: `M ${CARD_R} ${cardY[c.key]} C ${CARD_R + 40} ${cardY[c.key]}, ${HX - 40} ${OY}, ${HX} ${OY}`,
+        class: `fan ${c.side}`, opacity: c.key === mapSelected ? 0.9 : 0.35,
+      }));
+    }
+    const netSide = plan.net >= 0 ? "in" : "out";
+    front.append(svg("circle", { cx: HX, cy: OY, r: 9, class: `hub ${netSide}` }));
+    front.append(svg("text", { x: HX, y: OY - 20, "text-anchor": "middle", class: "lbl-sub" }, "NET / MONTH"));
+    front.append(svg("text", { x: HX, y: OY + 30, "text-anchor": "middle", class: `leaf-sub ${netSide}` },
+      `${plan.net >= 0 ? "+" : "−"}${fmt(Math.abs(plan.net))}`));
+
+    const at = place(plan.months.length);
+    plan.months.forEach((m, i) => {
+      const { lx, ly, fade } = at(i);
+      const side = m.value >= now ? "in" : "out";
+      back.append(svg("path", { d: curve(HX + 9, OY, lx, ly), class: `fan ${side}`, opacity: 0.25 + 0.45 * fade }));
+      const leaf = svg("g", { opacity: fade });
+      leaf.append(svg("circle", { cx: lx, cy: ly, r: 4.5, class: `dot ${side}`, filter: "url(#glow)" }));
+      leaf.append(svg("text", { x: lx + 14, y: ly - 3, class: "leaf-name" }, `End of ${m.label}`));
+      leaf.append(svg("text", { x: lx + 14, y: ly + 13, class: `leaf-sub ${side}` }, fmt(m.value)));
+      leaf.append(svg("title", {}, `Balance at the end of ${m.label}: ${fmt(m.value)}`));
+      front.append(leaf);
+    });
+    return;
+  }
+
+  // Logged view: the selected card's entries, or the latest activity across all cards.
+  // Each line starts at the right edge of the entry's own card.
+  const sel = cards.find((c) => c.key === mapSelected);
+  const pool = sel ? sel.items : cards.flatMap((c) => c.items);
+  const items = [...pool].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 16);
+  const maxAmt = Math.max(...items.map((it) => it.amount));
+  const at = place(items.length);
 
   items.forEach((it, i) => {
-    const dy = -half + i * rowGap;
-    const ly = OY + dy;
-    const lx = ARC_X + Math.sqrt(ARC_R * ARC_R - dy * dy); // x on the circle for this height
-    const fade = 1 - (Math.abs(dy) / ARC_R) * 0.6; // outer leaves fade, like the design
-
-    back.append(svg("path", {
-      d: `M ${fromX} ${selY} C ${fromX + 90} ${selY}, ${lx - 110} ${ly}, ${lx} ${ly}`,
-      class: `fan ${it.side}`, opacity: (sel ? 0.3 : 0.12) + 0.45 * fade,
-    }));
+    const { lx, ly, fade } = at(i);
+    back.append(svg("path", { d: curve(CARD_R, cardY[it.key], lx, ly), class: `fan ${it.side}`, opacity: (sel ? 0.3 : 0.18) + 0.45 * fade }));
 
     const leaf = svg("g", { opacity: fade });
     leaf.append(svg("circle", { cx: lx, cy: ly, r: 4.5, class: `dot ${it.side}`, filter: "url(#glow)" }));
     const name = it.label.length > 20 ? `${it.label.slice(0, 19)}…` : it.label;
     leaf.append(svg("text", { x: lx + 14, y: ly - 3, class: "leaf-name" }, name));
 
-    // 3 little blocks: how big this entry is next to the biggest in the group.
+    // 3 little blocks: how big this entry is next to the biggest one shown.
     // Spending turns amber/red when it's one of the bigger ones.
     const level = Math.max(1, Math.round((it.amount / maxAmt) * 3));
     const tone = it.side === "out" ? (level === 3 ? " hot" : level === 2 ? " warm" : "") : "";
@@ -567,6 +686,119 @@ $("detail").addEventListener("click", (e) => {
   if (selBtn) { mapSelected = selBtn.dataset.select; renderOverview(); }
 });
 
+// ----- Detail panel: monthly plan -----
+
+function renderPlanSummary(plan) {
+  const { goal } = state.settings;
+  const end = plan.months[0];
+  const pct = Math.round(Math.min(Math.max(plan.now / goal, 0), 1) * 100);
+  const monthName = new Date().toLocaleDateString("en-CA", { month: "long" });
+  const sign = (n) => (n >= 0 ? "+" : "−") + fmt(Math.abs(n));
+
+  let pill = ["Growing", ""];
+  if (!plan.lines.length) pill = ["Needs a budget", "warn"];
+  else if (plan.net < 0) pill = ["Shrinking", "bad"];
+
+  const notes = [];
+  if (!plan.lines.length) {
+    notes.push({ title: "Add your budget", text: "Set your hourly rate in Settings, then add what you spend in a normal month under Monthly budget.", tone: "warn" });
+  } else if (plan.net < 0) {
+    const runOut = plan.now > 0 ? Math.floor(plan.now / -plan.net) : 0;
+    notes.push({ title: "Spending more than you earn", text: `You plan to spend ${fmt(-plan.net)} more than you make each month.${plan.now > 0 ? ` At this pace your balance runs out in about ${runOut} month${runOut === 1 ? "" : "s"}.` : ""}`, tone: "warn" });
+  } else {
+    const goalText = plan.goalMonth === "already" ? "You've already reached your goal." : plan.goalMonth ? `At this pace you reach ${fmt(goal)} by ${plan.goalMonth}.` : "";
+    notes.push({ title: "Saving", text: `${fmt(plan.net)} left over each month. ${goalText}`, tone: "good" });
+  }
+  const outs = plan.lines.filter((l) => l.side === "out");
+  if (outs.length && plan.inTotal > 0) {
+    const big = outs.reduce((m, l) => (l.monthly > m.monthly ? l : m), outs[0]);
+    notes.push({ title: "Biggest cost", text: `${big.name}: ${fmt(big.monthly)} a month, ${Math.round((big.monthly / plan.inTotal) * 100)}% of what comes in.` });
+  }
+  // If you also log spending, compare this month so far with the plan
+  const month = today().slice(0, 7);
+  const spentSoFar = sum(state.expenses.filter((e) => e.date.startsWith(month)));
+  if (spentSoFar > 0 && plan.outTotal > 0) {
+    const expected = plan.outTotal * (1 - plan.frac + 1 / new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate());
+    const over = spentSoFar > expected;
+    notes.push({ title: over ? "Ahead of plan" : "On plan", text: `You've logged ${fmt(spentSoFar)} of spending this month. The plan expects about ${fmt(expected)} by today.`, tone: over ? "warn" : "good" });
+  }
+
+  $("detail").innerHTML = `
+    <span class="kicker"><i>◈</i>Monthly plan</span>
+    <h2 class="title">${fmt(plan.now)} now<br><span class="muted">${fmt(end.value)} by ${end.dateLabel}</span></h2>
+    <div class="status">
+      <div>
+        <span class="pill ${pill[1]}">${pill[0]}</span>
+        <p><b>${plan.daysLeft}</b> day${plan.daysLeft === 1 ? "" : "s"} left in ${monthName}</p>
+      </div>
+      <button type="button" class="btn-outline" data-open="budget">Edit budget ›</button>
+    </div>
+    <div class="metric">
+      <div class="metric-head"><span>Goal progress</span><span class="pill ${pct >= 50 ? "" : "warn"}">${pct >= 100 ? "Done" : pct >= 50 ? "Halfway+" : "Building"}</span></div>
+      <div class="metric-row">
+        <b>${pct}%</b>
+        <span class="delta ${plan.net >= 0 ? "down" : "up"}">${sign(plan.net)}<br>per month</span>
+        <div class="spark" aria-hidden="true">${sparkHtml([plan.now, ...plan.months.map((m) => m.value)])}</div>
+      </div>
+    </div>
+    <div class="tiles two">
+      <div class="tile"><b class="pos">${fmt(plan.inTotal)}</b><span>Money in / month</span></div>
+      <div class="tile"><b class="${plan.outTotal > 0 ? "neg" : ""}">${fmt(plan.outTotal)}</b><span>Money out / month</span></div>
+      <div class="tile"><b class="${plan.net >= 0 ? "pos" : "neg"}">${sign(plan.net)}</b><span>Left over / month</span></div>
+      <div class="tile"><b>${plan.goalMonth === "already" ? "Done" : plan.goalMonth || "–"}</b><span>${fmt(goal)} goal reached</span></div>
+    </div>
+    <span class="kicker gap">✦ Analysis</span>
+    <ul class="analysis">${analysisHtml(notes)}</ul>`;
+}
+
+function renderPlanLineDetail(line, plan) {
+  const isIn = line.side === "in";
+  const base = isIn ? plan.inTotal : plan.inTotal || plan.outTotal;
+  const share = base > 0 ? Math.round((line.monthly / base) * 100) : 0;
+  const level = share >= 40 ? ["High", isIn ? "" : "bad"] : share >= 20 ? ["Moderate", "warn"] : ["Low", ""];
+  const where = { settings: ["From Settings: hours/week × take-home per hour", "settings", "Edit settings ›"],
+                  fixed: ["Total of your fixed costs list", "fixed", "Edit fixed costs ›"],
+                  budget: ["From your monthly budget", "budget", "Edit budget ›"] }[line.source];
+
+  const notes = [];
+  if (isIn) {
+    notes.push({ title: "Income", text: `${line.name} is ${share}% of what comes in each month: ${fmt(line.monthly * 12)} a year.` });
+  } else {
+    const cut = line.monthly * 0.25;
+    let faster = "";
+    if (plan.net + cut > 0 && plan.now < state.settings.goal) {
+      const months = Math.ceil((state.settings.goal - plan.now) / (plan.net + cut));
+      faster = ` With that cut, you'd reach your goal in about ${months} month${months === 1 ? "" : "s"}.`;
+    }
+    notes.push({ title: "Where it goes", text: `${line.name} takes ${share}% of your income: ${fmt(line.monthly * 12)} a year.` });
+    if (line.source !== "fixed") notes.push({ title: "If you cut it by a quarter", text: `You'd keep ${fmt(cut)} more a month, ${fmt(cut * 12)} a year.${faster}`, tone: share >= 30 ? "warn" : "" });
+  }
+
+  $("detail").innerHTML = `
+    <span class="kicker"><i>${isIn ? "↘" : "↗"}</i>${isIn ? "Money in" : "Spending"} · monthly plan</span>
+    <h2 class="title">${esc(line.name)}</h2>
+    <div class="status">
+      <div>
+        <span class="pill">Every month</span>
+        <p>${where[0]}</p>
+      </div>
+      <button type="button" class="btn-outline" data-open="${where[1]}">${where[2]}</button>
+    </div>
+    <div class="metric">
+      <div class="metric-head"><span>Share of ${isIn ? "money in" : "your income"}</span><span class="pill ${level[1]}">${level[0]}</span></div>
+      <div class="metric-row"><b>${share}%</b><span class="delta">${fmt(line.monthly)}<br>a month</span></div>
+    </div>
+    <div class="tiles two">
+      <div class="tile"><b class="${isIn ? "pos" : "neg"}">${fmt((line.monthly * 12) / 52)}</b><span>Per week</span></div>
+      <div class="tile"><b class="${isIn ? "pos" : "neg"}">${fmt(line.monthly)}</b><span>Per month</span></div>
+      <div class="tile"><b class="${isIn ? "pos" : "neg"}">${fmt(line.monthly * 12)}</b><span>Per year</span></div>
+      <div class="tile"><b>${share}%</b><span>Of ${isIn ? "money in" : "income"}</span></div>
+    </div>
+    <span class="kicker gap">✦ Analysis</span>
+    <ul class="analysis">${analysisHtml(notes)}</ul>
+    <button type="button" class="btn-outline back" data-select="balance">‹ Back to the plan</button>`;
+}
+
 // ================= 5. This week =================
 
 function renderWeek() {
@@ -623,12 +855,20 @@ function renderWeek() {
 // ================= 6. Planner (v3) =================
 // How much money you'll have on a date, and how much of it you could lose.
 
+// Default weekly spending for the planner: your monthly budget's spending if you have one,
+// otherwise the average of what you logged in the last 4 weeks. (Fixed costs are added separately.)
+function defaultWeeklySpend() {
+  const budgetOut = state.budget.filter((b) => b.side === "out").reduce((s, b) => s + b.monthly, 0);
+  return budgetOut > 0 ? (budgetOut * 12) / 52 : avgWeeklySpend();
+}
+const extraIncomePerWeek = () => (state.budget.filter((b) => b.side === "in").reduce((s, b) => s + b.monthly, 0) * 12) / 52;
+
 function planInputs() {
   const p = state.plan;
   return {
     date: p.date || addDays(today(), 70),
     hours: p.hours ?? state.settings.hoursPerWeek,
-    spend: p.spend ?? Math.round(avgWeeklySpend()),
+    spend: p.spend ?? Math.round(defaultWeeklySpend()),
     floor: p.floor ?? 0,
     locked: p.locked ?? 0,
   };
@@ -640,11 +880,12 @@ function planResult() {
   const perHour = takeHomePerHour();
   const fixed = fixedPerWeek();
   const now = totals().saved;
-  const jobIncome = p.hours * perHour * weeks;
+  const extra = extraIncomePerWeek(); // "Extra income" lines from the monthly budget
+  const jobIncome = (p.hours * perHour + extra) * weeks;
   const out = (p.spend + fixed) * weeks;
   const then = now + jobIncome - out;
   const maxLoss = then - p.floor - p.locked;
-  const weeklyNet = p.hours * perHour - p.spend - fixed;
+  const weeklyNet = p.hours * perHour + extra - p.spend - fixed;
   return { ...p, weeks, perHour, fixed, now, jobIncome, out, then, maxLoss, weeklyNet };
 }
 
@@ -655,7 +896,7 @@ function fillPlanForm() {
   $("pHours").value = p.hours ?? "";
   $("pHours").placeholder = state.settings.hoursPerWeek;
   $("pSpend").value = p.spend ?? "";
-  $("pSpend").placeholder = Math.round(avgWeeklySpend());
+  $("pSpend").placeholder = Math.round(defaultWeeklySpend());
   $("pFloor").value = p.floor;
   $("pLocked").value = p.locked;
 }
@@ -670,7 +911,11 @@ $("planForm").addEventListener("input", () => {
 
 function renderPlanner() {
   const r = planResult();
-  $("pHint").textContent = `Empty boxes use your settings: ${state.settings.hoursPerWeek} hrs/week, and ${fmt(avgWeeklySpend())}/week spending (your last 4 weeks, without bills).`;
+  // keep the grey hints in empty boxes up to date with your settings and budget
+  $("pHours").placeholder = state.settings.hoursPerWeek;
+  $("pSpend").placeholder = Math.round(defaultWeeklySpend());
+  const fromBudget = state.budget.some((b) => b.side === "out");
+  $("pHint").textContent = `Empty boxes use your settings: ${state.settings.hoursPerWeek} hrs/week, and ${fmt(defaultWeeklySpend())}/week spending (${fromBudget ? "from your monthly budget" : "your last 4 weeks, without bills"}).`;
   $("pKicker").textContent = `By ${parse(r.date).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}`;
   $("pMax").textContent = fmt(Math.max(r.maxLoss, 0));
   $("pMax").classList.toggle("neg", r.maxLoss <= 0);
@@ -758,14 +1003,23 @@ function showPane(name) {
   document.querySelectorAll("[data-pane-body]").forEach((p) => { p.hidden = p.dataset.paneBody !== name; });
 }
 
-$("menuBtn").addEventListener("click", () => openDrawer("income"));
-$("addBtn").addEventListener("click", () => openDrawer("income"));
+$("menuBtn").addEventListener("click", () => openDrawer(mapMode === "plan" ? "budget" : "income"));
+$("addBtn").addEventListener("click", () => openDrawer(mapMode === "plan" ? "budget" : "income"));
 $("closeDrawer").addEventListener("click", closeDrawer);
 $("scrim").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 document.querySelectorAll("[data-pane]").forEach((b) => b.addEventListener("click", () => showPane(b.dataset.pane)));
 
 function renderDrawerLists() {
+  const bud = $("budgetList");
+  bud.innerHTML = "";
+  $("budgetEmpty").hidden = state.budget.length > 0;
+  for (const b of state.budget) {
+    bud.append(listRow({
+      what: b.name, amount: `${b.side === "in" ? "+" : "−"}${fmt(b.monthly)}/mo`, isIn: b.side === "in",
+      onDelete: () => { state.budget = state.budget.filter((x) => x.id !== b.id); },
+    }));
+  }
   const inc = $("incomeList");
   inc.innerHTML = "";
   for (const e of [...state.entries].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30)) {
@@ -812,6 +1066,22 @@ document.querySelectorAll('input[name="kind"]').forEach((radio) => {
   });
 });
 const selectedKind = () => document.querySelector('input[name="kind"]:checked').value;
+
+$("budgetForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  $("budgetError").textContent = "";
+  const name = $("budgetName").value.trim();
+  const monthly = Number($("budgetAmount").value);
+  if (!name) return ($("budgetError").textContent = "Give it a name, like Food.");
+  if (!(monthly > 0)) return ($("budgetError").textContent = "Enter how much per month.");
+  const side = document.querySelector('input[name="bside"]:checked').value;
+  state.budget.push({ id: newId(), name, side, monthly: Math.round(monthly * 100) / 100 });
+  saveState();
+  $("budgetName").value = "";
+  $("budgetAmount").value = "";
+  $("budgetName").focus();
+  render();
+});
 
 $("incomeForm").addEventListener("submit", (event) => {
   event.preventDefault(); // stop the browser reloading the page
@@ -1061,7 +1331,7 @@ function render() {
 
 $("date").value = today();
 $("expDate").value = today();
-showPane("income");
+showPane("budget");
 fillPlanForm();
 showView();
 tickClock();
